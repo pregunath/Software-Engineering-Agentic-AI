@@ -43,11 +43,18 @@ def test_docker_runner_uses_isolation_flags(tmp_path: Path, monkeypatch: pytest.
     calls: list[list[str]] = []
     monkeypatch.setattr("app.execution.shutil.which", lambda _: "docker.exe")
 
-    def fake_run(command, **kwargs):
-        calls.append(command)
-        return type("Completed", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
+    class FakePopen:
+        def __init__(self, command, **kwargs):
+            calls.append(command)
+            self.returncode = 0
 
-    monkeypatch.setattr("app.execution.subprocess.run", fake_run)
+        def poll(self):
+            return 0
+
+        def communicate(self, timeout=None):
+            return ("ok", "")
+
+    monkeypatch.setattr("app.execution.subprocess.Popen", FakePopen)
     result = DockerCommandRunner(tmp_path).run(["python", "-m", "pytest"])
 
     assert result.isolated

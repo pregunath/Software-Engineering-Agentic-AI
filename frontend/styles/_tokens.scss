@@ -1,0 +1,29 @@
+:root {
+  --graphite-950: #0c0e11;
+  --graphite-900: #12161c;
+  --graphite-850: #181d25;
+  --graphite-800: #222933;
+  --graphite-700: #2e3744;
+  --copper-500: #d4783a;
+  --copper-400: #e8924f;
+  --amber-300: #f0b46a;
+  --ember-glow: rgba(212, 120, 58, 0.35);
+  --steel-200: #c8d0db;
+  --steel-400: #8b96a8;
+  --steel-500: #6b7585;
+  --success: #5cb88a;
+  --danger: #d45a52;
+  --glass-fill: rgba(24, 29, 37, 0.55);
+  --glass-stroke: rgba(240, 180, 106, 0.16);
+  --glass-highlight: rgba(255, 255, 255, 0.08);
+  --ink: var(--steel-200);
+  --muted: var(--steel-400);
+  --radius-sm: 10px;
+  --radius-md: 16px;
+  --radius-lg: 22px;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --font-display: var(--font-syne), "Segoe UI", sans-serif;
+  --font-body: var(--font-dm-sans), "Segoe UI", sans-serif;
+  --font-mono: var(--font-jetbrains), "Consolas", monospace;
+  --shell-max: 1180px;
+}

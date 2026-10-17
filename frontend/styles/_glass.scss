@@ -1,0 +1,40 @@
+@mixin glass-panel {
+  position: relative;
+  overflow: hidden;
+  background:
+    linear-gradient(145deg, var(--glass-highlight), transparent 42%),
+    var(--glass-fill);
+  border: 1px solid var(--glass-stroke);
+  border-radius: var(--radius-md);
+  box-shadow:
+    0 1px 0 var(--glass-highlight) inset,
+    0 18px 40px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(18px) saturate(1.2);
+  -webkit-backdrop-filter: blur(18px) saturate(1.2);
+
+  &::after {
+    content: "";
+    pointer-events: none;
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      105deg,
+      transparent 30%,
+      rgba(255, 255, 255, 0.08) 48%,
+      transparent 62%
+    );
+    transform: translateX(-120%) skewX(-18deg);
+    opacity: 0;
+  }
+
+  &:hover::after {
+    animation: forge-specular 0.9s var(--ease-out);
+  }
+}
+
+@mixin focus-ring {
+  outline: none;
+  box-shadow:
+    0 0 0 2px var(--graphite-900),
+    0 0 0 4px var(--copper-400);
+}

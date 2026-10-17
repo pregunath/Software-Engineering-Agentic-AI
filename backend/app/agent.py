@@ -10,7 +10,8 @@ from sqlalchemy.orm import Session
 from app.events import record_event
 from app.llm import LLMError
 from app.models import PlanStatus, Task, TaskPlan, TaskStatus
-from app.task_service import update_task_status
+from app.runtime import DuplicateWorkerError, task_runtime_registry
+from app.task_service import TaskCancelled, ensure_task_continuable, update_task_status
 
 
 class PlanningError(RuntimeError):
@@ -62,22 +63,65 @@ class AgentOrchestrator:
             update_task_status(self.db, task_id, TaskStatus.PLANNING)
         elif task.status != TaskStatus.PLANNING.value:
             raise PlanningError("Task is not available for planning")
+
         try:
+            runtime = task_runtime_registry.begin(task_id, "planning")
+        except DuplicateWorkerError as error:
+            raise PlanningError(str(error)) from error
+
+        try:
+            ensure_task_continuable(self.db, task_id, {TaskStatus.PLANNING})
             capabilities = await self.provider.model_capabilities(self.model)
-            record_event(self.db, task_id, "agent.model_ready", {"model": self.model, "tools": bool(getattr(capabilities, "supports_tools", False))})
+            if runtime.cancel_event.is_set():
+                raise TaskCancelled(f"Task {task_id} was cancelled")
+            record_event(
+                self.db,
+                task_id,
+                "agent.model_ready",
+                {"model": self.model, "tools": bool(getattr(capabilities, "supports_tools", False))},
+            )
+            self.db.commit()
+
             response = await self.provider.chat(
                 self.model,
                 [
-                    {"role": "system", "content": "Return only JSON with summary, content, and proposed_diff. Do not edit files or run commands."},
-                    {"role": "user", "content": f"Task title: {task.title}\nTask description: {task.description}\nRepository context:\n{self.repository_context or 'No repository context was supplied.'}"},
+                    {
+                        "role": "system",
+                        "content": "Return only JSON with summary, content, and proposed_diff. Do not edit files or run commands.",
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Task title: {task.title}\n"
+                            f"Task description: {task.description}\n"
+                            f"Repository context:\n{self.repository_context or 'No repository context was supplied.'}"
+                        ),
+                    },
                 ],
             )
+
+            # Delayed model responses must not restart cancelled work.
+            ensure_task_continuable(self.db, task_id, {TaskStatus.PLANNING})
             plan_input = parse_generated_plan(response)
+            ensure_task_continuable(self.db, task_id, {TaskStatus.PLANNING})
+        except TaskCancelled as error:
+            record_event(self.db, task_id, "agent.planning_cancelled", {"detail": str(error)})
+            self.db.commit()
+            raise PlanningError(str(error)) from error
         except (LLMError, PlanningError) as error:
-            task.status = TaskStatus.FAILED.value
+            try:
+                ensure_task_continuable(self.db, task_id, {TaskStatus.PLANNING})
+            except TaskCancelled:
+                record_event(self.db, task_id, "agent.planning_cancelled", {"detail": str(error)})
+                self.db.commit()
+                raise PlanningError(f"Task {task_id} was cancelled") from error
             record_event(self.db, task_id, "agent.planning_failed", {"detail": str(error)})
             self.db.commit()
-            raise
+            update_task_status(self.db, task_id, TaskStatus.FAILED)
+            raise PlanningError(str(error)) from error
+        finally:
+            task_runtime_registry.end(task_id)
+
         update_task_status(self.db, task_id, TaskStatus.AWAITING_APPROVAL)
         plan = TaskPlan(
             task_id=task_id,

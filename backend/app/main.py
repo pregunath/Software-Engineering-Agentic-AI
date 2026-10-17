@@ -4,10 +4,11 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
+from app.auth import require_api_key
 from app.config import Settings, get_settings
 from app.db import get_db, initialize_database
-from app.ollama import OllamaClient
 from app.inspection_api import router as inspection_router
+from app.ollama import OllamaClient
 from app.plans import router as plans_router
 from app.recovery import recover_interrupted_tasks
 from app.tasks import router as tasks_router
@@ -21,25 +22,12 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="Local AI Software Engineer Agent", lifespan=lifespan)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
-    allow_credentials=False,
-    allow_methods=["GET", "POST", "PATCH"],
-    allow_headers=["Content-Type"],
-)
-app.include_router(tasks_router)
-app.include_router(plans_router)
-app.include_router(inspection_router)
-app.include_router(workspace_router)
-
-
-@app.get("/health")
 async def health(settings: Settings = Depends(get_settings)) -> dict[str, object]:
     ollama = await OllamaClient(settings).health()
     return {
         "status": "ok",
+        "environment": settings.environment,
+        "public_base_url": settings.public_base_url,
         "ollama": {
             "available": ollama.available,
             "version": ollama.version,
@@ -50,6 +38,28 @@ async def health(settings: Settings = Depends(get_settings)) -> dict[str, object
     }
 
 
-@app.get("/health/database")
 def database_health(_: Session = Depends(get_db)) -> dict[str, str]:
     return {"status": "ok"}
+
+
+def create_app() -> FastAPI:
+    settings = get_settings()
+    application = FastAPI(title=settings.app_name, lifespan=lifespan)
+    application.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origin_list(),
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
+        allow_headers=["Content-Type", "Authorization"],
+    )
+    protected = [Depends(require_api_key)]
+    application.include_router(tasks_router, dependencies=protected)
+    application.include_router(plans_router, dependencies=protected)
+    application.include_router(inspection_router, dependencies=protected)
+    application.include_router(workspace_router, dependencies=protected)
+    application.add_api_route("/health", health, methods=["GET"])
+    application.add_api_route("/health/database", database_health, methods=["GET"])
+    return application
+
+
+app = create_app()

@@ -1,0 +1,31 @@
+# Companion Ollama app on Fly private network.
+# Deploy: fly launch --config fly.ollama.toml
+# The API reaches it at http://forge-ollama.internal:11434
+#
+# GPU: use a GPU-capable Fly machine if available; otherwise CPU inference is slow.
+# After boot, pull the model once: fly ssh console -a forge-ollama -C "ollama pull gemma4:e2b"
+
+app = "forge-ollama"
+primary_region = "iad"
+
+[build]
+  image = "ollama/ollama:latest"
+
+[env]
+  OLLAMA_HOST = "0.0.0.0:11434"
+
+[[services]]
+  internal_port = 11434
+  protocol = "tcp"
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[services.ports]]
+    handlers = ["http"]
+    port = 11434
+
+[[vm]]
+  memory = "4gb"
+  cpu_kind = "shared"
+  cpus = 2

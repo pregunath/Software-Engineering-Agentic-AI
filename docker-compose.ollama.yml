@@ -1,0 +1,16 @@
+# Local or self-hosted Ollama companion for Forge.
+# Usage: docker compose -f docker-compose.ollama.yml up -d
+# Then set AGENT_OLLAMA_BASE_URL=http://localhost:11434 (or http://ollama:11434 on the same compose network).
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: forge-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - forge_ollama_data:/root/.ollama
+    restart: unless-stopped
+
+volumes:
+  forge_ollama_data:

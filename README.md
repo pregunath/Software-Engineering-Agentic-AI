@@ -1,22 +1,17 @@
-# Forge: Local AI Software Engineer Agent
+# Forge: AI Software Engineer Agent
 
-Forge is a local-first software engineering agent. It will investigate coding tasks, create an approval-gated plan, make changes in an isolated workspace, run approved tests, and present a reviewable diff.
+Forge investigates coding tasks, creates an approval-gated plan, applies changes in an isolated workspace, runs approved tests, and presents a reviewable diff.
 
-## Current status
+It runs **locally** for development and can deploy **globally** (Vercel frontend + Fly.io API + Ollama).
 
-Phases 1 and 2 are implemented:
+## Modes
 
-- FastAPI backend with environment-based configuration
-- SQLite task persistence through SQLAlchemy
-- Ollama availability and version health check
-- Task creation and history API
-- Next.js dashboard shell wired to the task API
-- Local-only default configuration
-- Disposable repository copies with bounded, safe inspection tools
-- Ollama model capability discovery and chat provider boundary
-- Validated task state transitions persisted through the API
+| Mode | Frontend | API | LLM |
+|---|---|---|---|
+| Local | `localhost:3000` | `127.0.0.1:8000` | Ollama on this machine |
+| Cloud | Vercel | Fly.io | Ollama companion app / host |
 
-The bounded planning loop, approval records, patching, execution sandbox, SSE events, GitHub integration, and evaluation benchmarks are planned next.
+Cloud deploy steps: [docs/deploy.md](docs/deploy.md). Security notes: [docs/security.md](docs/security.md).
 
 ## Prerequisites
 
@@ -25,8 +20,7 @@ The bounded planning loop, approval records, patching, execution sandbox, SSE ev
 - Node.js 20+
 - Ollama 0.40.5 or newer
 - A local model, initially `gemma4:e2b`
-
-On this development machine Ollama is installed with an NVIDIA RTX A2000 Laptop GPU (8 GB VRAM) and 15.7 GB system memory. The initial model is a reasonable local starting point; larger models may be slow or spill into system memory.
+- Docker (required for isolated test execution)
 
 ## Run locally
 
@@ -35,6 +29,12 @@ Start Ollama and optionally pull the initial model:
 ```powershell
 ollama serve
 ollama pull gemma4:e2b
+```
+
+Or use Compose:
+
+```powershell
+docker compose -f docker-compose.ollama.yml up -d
 ```
 
 In another terminal:
@@ -48,16 +48,27 @@ In a third terminal:
 
 ```powershell
 cd frontend
+copy .env.example .env.local
 npm install
 npm run dev
 ```
 
-Open http://localhost:3000. The API health endpoint is http://127.0.0.1:8000/health.
+Open http://localhost:3000. The dashboard calls same-origin `/api/forge/*`; the Next.js proxy forwards to `FORGE_API_UPSTREAM` (default `http://127.0.0.1:8000`) and injects `FORGE_API_KEY` when set.
 
-For a step-by-step manual covering automated tests, smoke checks, dashboard workflows, planning, SSE events, and Docker execution, see [docs/testing-guide.md](docs/testing-guide.md).
+API health: http://127.0.0.1:8000/health.
 
-## Local-only policy
+Copy [`.env.example`](.env.example) at the repo root for backend variables. See [frontend/.env.example](frontend/.env.example) for the dashboard proxy.
 
-Forge does not use paid LLM APIs or cloud inference. It calls Ollama at `http://localhost:11434` by default. Cloud models and API keys are intentionally out of scope for this project.
+For automated tests and smoke checks, see [docs/testing-guide.md](docs/testing-guide.md).
 
-Do not put repository content, GitHub tokens, or environment variables into model prompts. Future GitHub functionality will be optional and approval-gated.
+## Cloud deploy (summary)
+
+1. Deploy Ollama with [`fly.ollama.toml`](fly.ollama.toml)
+2. Deploy the API with [`fly.toml`](fly.toml) + `/data` volume; set `AGENT_API_KEY` and `AGENT_CORS_ORIGINS`
+3. Deploy `frontend/` on Vercel with `FORGE_API_UPSTREAM`, `FORGE_API_KEY`, and `NEXT_PUBLIC_API_BASE_URL=/api/forge`
+
+Details: [docs/deploy.md](docs/deploy.md).
+
+## Inference policy
+
+Forge uses **Ollama** (self-hosted / local). Paid cloud LLM APIs are out of scope. Do not put repository secrets, GitHub tokens, or environment variables into model prompts.
