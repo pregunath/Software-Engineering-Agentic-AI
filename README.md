@@ -4,6 +4,12 @@ Forge investigates coding tasks, creates an approval-gated plan, applies changes
 
 It runs **locally** for development and can deploy **globally** (Vercel frontend + Fly.io API + Ollama).
 
+## Coding workspace
+
+The UI is a standalone coding environment (explorer + Monaco + agent + git/test panel). See [docs/workspace.md](docs/workspace.md).
+
+Register a project by pasting an **absolute path on the API host** (local mode). Browsers cannot browse your disk directly.
+
 ## Modes
 
 | Mode | Frontend | API | LLM |

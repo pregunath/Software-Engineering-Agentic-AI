@@ -19,6 +19,16 @@ class TaskStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class RegisteredWorkspace(Base):
+    __tablename__ = "registered_workspaces"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(200))
+    root_path: Mapped[str] = mapped_column(String(1_000), unique=True)
+    agent_workspace_path: Mapped[str | None] = mapped_column(String(1_000), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class Task(Base):
     __tablename__ = "tasks"
 
@@ -26,6 +36,7 @@ class Task(Base):
     title: Mapped[str] = mapped_column(String(200))
     description: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(40), default=TaskStatus.QUEUED.value)
+    workspace_id: Mapped[int | None] = mapped_column(ForeignKey("registered_workspaces.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow

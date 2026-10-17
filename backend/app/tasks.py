@@ -18,6 +18,7 @@ def create_task(task_input: TaskCreate, db: Session = Depends(get_db)) -> Task:
         title=task_input.title,
         description=task_input.description,
         status=TaskStatus.QUEUED.value,
+        workspace_id=task_input.workspace_id,
     )
     db.add(task)
     db.commit()

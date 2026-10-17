@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
     public_base_url: str = "http://127.0.0.1:8000"
     api_key: str = ""
+    # When true, the API may register absolute paths on the host running Forge.
+    # Keep false on public cloud hosts so clients cannot probe the server filesystem.
+    allow_host_workspaces: bool = True
 
     @field_validator("cors_origins", mode="before")
     @classmethod

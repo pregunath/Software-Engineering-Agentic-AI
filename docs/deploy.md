@@ -77,3 +77,8 @@ cd frontend && npm run dev
 - Non-empty `AGENT_API_KEY` in production
 - CORS limited to your Vercel origin(s)
 - Never put `AGENT_API_KEY` / `FORGE_API_KEY` in `NEXT_PUBLIC_*`
+- Set `AGENT_ALLOW_HOST_WORKSPACES=false` on public API hosts so clients cannot register arbitrary server paths
+
+## Local coding workspace note
+
+Opening a repository registers an **absolute path on the API host**, not a browser file picker into your laptop. Run the API on the same machine as your projects for local development.

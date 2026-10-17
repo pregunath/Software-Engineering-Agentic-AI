@@ -55,11 +55,21 @@ async def generate_task_plan(
     if request and request.workspace_path:
         try:
             inspector = RepositoryInspector(Path(request.workspace_path))
-            repository_context = "\n".join(inspector.list_files())
+            repository_context = "FILES:\n" + "\n".join(inspector.list_files())
             configuration = inspector.inspect_project_configuration()
             repository_context += "\n\nCONFIGURATION:\n" + "\n".join(
                 f"{name}:\n{content}" for name, content in configuration.items()
             )
+            if request.open_file_path:
+                try:
+                    open_content = inspector.read_file(request.open_file_path)
+                    repository_context += (
+                        f"\n\nOPEN_FILE ({request.open_file_path}):\n{open_content[:12_000]}"
+                    )
+                except InspectionError:
+                    pass
+            if request.selection:
+                repository_context += f"\n\nSELECTION:\n{request.selection[:8_000]}"
         except InspectionError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
     try:

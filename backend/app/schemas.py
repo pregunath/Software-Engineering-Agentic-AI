@@ -8,6 +8,7 @@ from app.models import TaskStatus
 class TaskCreate(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     description: str = Field(min_length=1, max_length=20_000)
+    workspace_id: int | None = None
 
 
 class TaskRead(BaseModel):
@@ -17,6 +18,7 @@ class TaskRead(BaseModel):
     title: str
     description: str
     status: TaskStatus
+    workspace_id: int | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -33,6 +35,8 @@ class PlanCreate(BaseModel):
 
 class PlanGenerateRequest(BaseModel):
     workspace_path: str | None = Field(default=None, max_length=1_000)
+    open_file_path: str | None = Field(default=None, max_length=500)
+    selection: str | None = Field(default=None, max_length=20_000)
 
 
 class ExecutionRequest(BaseModel):

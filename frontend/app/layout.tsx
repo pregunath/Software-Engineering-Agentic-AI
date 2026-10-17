@@ -21,8 +21,8 @@ const jetbrains = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Forge | AI Software Engineer",
-  description: "Approval-gated software engineering agent for planning, patching, and verifying repository changes.",
+  title: "Forge | AI Coding Workspace",
+  description: "Standalone AI coding workspace with local Ollama, Monaco editor, and approval-gated agent edits.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

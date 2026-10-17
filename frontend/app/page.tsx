@@ -1,367 +1,459 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { AgentPanel } from "../components/workspace/AgentPanel";
+import { CodeEditor } from "../components/workspace/CodeEditor";
+import { FileTree } from "../components/workspace/FileTree";
+import { api, type Plan, type Repo, type Task, type TaskEvent, type TreeNode } from "../lib/api";
 
-type Task = { id: number; title: string; description: string; status: string };
-type Plan = { id: number; summary: string; content: string; proposed_diff: string; status: string };
-type TaskEvent = { id: number; type: string; payload: string };
+type TabState = {
+  path: string;
+  content: string;
+  savedContent: string;
+};
 
-const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "/api/forge";
-
-const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
-const CANCELLABLE_STATUSES = new Set([
-  "queued",
-  "planning",
-  "awaiting_approval",
-  "executing",
-  "testing",
-  "needs_attention",
-]);
+type BottomTab = "problems" | "tests" | "agent" | "git";
 
 export default function Home() {
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [repos, setRepos] = useState<Repo[]>([]);
+  const [activeRepoId, setActiveRepoId] = useState<number | null>(null);
+  const [registerPath, setRegisterPath] = useState("");
+  const [tree, setTree] = useState<TreeNode[]>([]);
+  const [tabs, setTabs] = useState<TabState[]>([]);
+  const [activePath, setActivePath] = useState<string | null>(null);
+  const [filter, setFilter] = useState("");
+  const [branch, setBranch] = useState<string>("—");
+  const [gitStatus, setGitStatus] = useState("");
+  const [gitDiff, setGitDiff] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [hostEnabled, setHostEnabled] = useState(true);
+  const [capabilityNote, setCapabilityNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [prompt, setPrompt] = useState("");
+  const [task, setTask] = useState<Task | null>(null);
   const [plan, setPlan] = useState<Plan | null>(null);
   const [events, setEvents] = useState<TaskEvent[]>([]);
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isCancelling, setIsCancelling] = useState(false);
-  const [isRetrying, setIsRetrying] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [bottomTab, setBottomTab] = useState<BottomTab>("agent");
+  const [agentLog, setAgentLog] = useState("Ready.");
 
-  useEffect(() => {
-    void loadTasks();
+  const activeRepo = repos.find((repo) => repo.id === activeRepoId) ?? null;
+  const activeTab = tabs.find((tab) => tab.path === activePath) ?? null;
+  const dirty = !!activeTab && activeTab.content !== activeTab.savedContent;
+
+  const filteredTree = useMemo(() => {
+    if (!filter.trim()) return tree;
+    const query = filter.trim().toLowerCase();
+    const filterNodes = (nodes: TreeNode[]): TreeNode[] =>
+      nodes
+        .map((node) => {
+          if (node.type === "file") {
+            return node.path.toLowerCase().includes(query) ? node : null;
+          }
+          const children = filterNodes(node.children ?? []);
+          if (children.length === 0 && !node.name.toLowerCase().includes(query)) return null;
+          return { ...node, children };
+        })
+        .filter((node): node is TreeNode => node !== null);
+    return filterNodes(tree);
+  }, [filter, tree]);
+
+  const refreshRepos = useCallback(async () => {
+    const [caps, listed] = await Promise.all([api.capabilities(), api.listRepos()]);
+    setHostEnabled(caps.host_workspaces_enabled);
+    setCapabilityNote(caps.note);
+    setRepos(listed);
+    if (listed.length && activeRepoId === null) setActiveRepoId(listed[0].id);
+  }, [activeRepoId]);
+
+  const refreshTree = useCallback(async (repoId: number) => {
+    const data = await api.tree(repoId);
+    setTree(data.tree);
+  }, []);
+
+  const refreshGit = useCallback(async (repoId: number) => {
+    try {
+      const status = await api.gitStatus(repoId);
+      setBranch(status.branch || "—");
+      setGitStatus(status.status || "(clean)");
+      const diff = await api.gitDiff(repoId);
+      setGitDiff(diff.diff || "");
+    } catch {
+      setBranch("no git");
+      setGitStatus("Git unavailable for this folder.");
+      setGitDiff("");
+    }
   }, []);
 
   useEffect(() => {
-    if (!selectedTask) return;
-    const taskId = selectedTask.id;
-    void loadTaskDetails(selectedTask);
-    const source = new EventSource(`${apiBaseUrl}/tasks/${taskId}/events/stream`);
+    void refreshRepos().catch((err: Error) => setError(err.message));
+  }, [refreshRepos]);
 
-    const applyStatus = (status: string) => {
-      setSelectedTask((current) => (current && current.id === taskId ? { ...current, status } : current));
-      setTasks((current) => current.map((task) => (task.id === taskId ? { ...task, status } : task)));
-    };
+  useEffect(() => {
+    if (activeRepoId === null) return;
+    void refreshTree(activeRepoId).catch((err: Error) => setError(err.message));
+    void refreshGit(activeRepoId);
+  }, [activeRepoId, refreshTree, refreshGit]);
 
-    const refreshEvents = () => {
-      void fetch(`${apiBaseUrl}/tasks/${taskId}/events`)
-        .then((response) => (response.ok ? response.json() : null))
-        .then((loaded: TaskEvent[] | null) => {
-          if (loaded) setEvents(loaded);
-        });
-    };
-
-    for (const eventName of ["task.status_changed", "task.cancelled", "task.recovered", "task.retry_accepted"]) {
-      source.addEventListener(eventName, (event) => {
-        const payload = JSON.parse((event as MessageEvent).data) as { status?: string };
-        if (payload.status) applyStatus(payload.status);
-        refreshEvents();
+  useEffect(() => {
+    if (!task) return;
+    const source = new EventSource(`${api.baseUrl}/tasks/${task.id}/events/stream`);
+    const refresh = () => {
+      void api.events(task.id).then(setEvents).catch(() => undefined);
+      void api.listTasks().then((tasks) => {
+        const updated = tasks.find((item) => item.id === task.id);
+        if (updated) setTask(updated);
       });
+      void api
+        .getPlan(task.id)
+        .then(setPlan)
+        .catch(() => undefined);
+    };
+    for (const name of ["task.status_changed", "task.cancelled", "task.recovered", "task.retry_accepted"]) {
+      source.addEventListener(name, refresh);
     }
     source.onerror = () => source.close();
+    refresh();
     return () => source.close();
-  }, [selectedTask?.id]);
+  }, [task?.id]);
 
-  async function loadTasks() {
+  async function registerRepo() {
+    if (!registerPath.trim()) return;
+    setError(null);
     try {
-      const response = await fetch(`${apiBaseUrl}/tasks`);
-      if (!response.ok) throw new Error("Could not load tasks.");
-      const loaded: Task[] = await response.json();
-      setTasks(loaded);
-      if (loaded[0]) setSelectedTask(loaded[0]);
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Could not load tasks.");
+      const repo = await api.registerRepo(registerPath.trim());
+      setRegisterPath("");
+      await refreshRepos();
+      setActiveRepoId(repo.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not register repository.");
     }
   }
 
-  async function loadTaskDetails(task: Task) {
-    const [planResponse, eventsResponse] = await Promise.all([
-      fetch(`${apiBaseUrl}/tasks/${task.id}/plan`),
-      fetch(`${apiBaseUrl}/tasks/${task.id}/events`),
-    ]);
-    setPlan(planResponse.ok ? await planResponse.json() : null);
-    if (eventsResponse.ok) setEvents(await eventsResponse.json());
+  async function openFile(path: string) {
+    if (!activeRepo) return;
+    const existing = tabs.find((tab) => tab.path === path);
+    if (existing) {
+      setActivePath(path);
+      return;
+    }
+    try {
+      const file = await api.readFile(activeRepo.id, path);
+      setTabs((current) => [...current, { path, content: file.content, savedContent: file.content }]);
+      setActivePath(path);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not open file.");
+    }
   }
 
-  async function createTask(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setIsSubmitting(true);
+  function updateActiveContent(content: string) {
+    if (!activePath) return;
+    setTabs((current) => current.map((tab) => (tab.path === activePath ? { ...tab, content } : tab)));
+  }
+
+  async function saveActive() {
+    if (!activeRepo || !activeTab) return;
     setError(null);
     try {
-      const response = await fetch(`${apiBaseUrl}/tasks`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title, description }),
+      await api.writeFile(activeRepo.id, activeTab.path, activeTab.content, activeTab.savedContent);
+      setTabs((current) =>
+        current.map((tab) =>
+          tab.path === activeTab.path ? { ...tab, savedContent: tab.content } : tab,
+        ),
+      );
+      await refreshGit(activeRepo.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save file.");
+    }
+  }
+
+  function closeTab(path: string) {
+    const tab = tabs.find((item) => item.path === path);
+    if (tab && tab.content !== tab.savedContent) {
+      const ok = window.confirm(`${path} has unsaved changes. Close anyway?`);
+      if (!ok) return;
+    }
+    setTabs((current) => current.filter((item) => item.path !== path));
+    if (activePath === path) {
+      const remaining = tabs.filter((item) => item.path !== path);
+      setActivePath(remaining[remaining.length - 1]?.path ?? null);
+    }
+  }
+
+  async function runAgent() {
+    if (!activeRepo || !prompt.trim()) return;
+    setBusy(true);
+    setError(null);
+    setBottomTab("agent");
+    setAgentLog("Creating task and generating plan…");
+    try {
+      const created = await api.createTask(
+        prompt.trim().slice(0, 80),
+        prompt.trim(),
+        activeRepo.id,
+      );
+      setTask(created);
+      // Plan against the registered host root so open-file context matches the editor.
+      const generated = await api.generatePlan(created.id, {
+        workspace_path: activeRepo.root_path,
+        open_file_path: activePath ?? undefined,
       });
-      if (!response.ok) throw new Error("Could not create task.");
-      const task: Task = await response.json();
-      setTasks((current) => [task, ...current]);
-      setSelectedTask(task);
-      setTitle("");
-      setDescription("");
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Could not create task.");
+      setPlan(generated);
+      setEvents(await api.events(created.id));
+      setAgentLog("Plan ready for review.");
+      setPrompt("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Agent request failed.");
+      setAgentLog("Agent request failed.");
     } finally {
-      setIsSubmitting(false);
+      setBusy(false);
     }
   }
 
   async function approvePlan() {
-    if (!selectedTask || isCancelling || selectedTask.status === "cancelled") return;
-    const response = await fetch(`${apiBaseUrl}/tasks/${selectedTask.id}/plan/approve`, { method: "POST" });
-    if (!response.ok) {
-      setError("Could not approve this plan.");
-      return;
+    if (!task) return;
+    setBusy(true);
+    try {
+      const approved = await api.approvePlan(task.id);
+      setPlan(approved);
+      setAgentLog("Plan approved. Ready to apply & test.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not approve plan.");
+    } finally {
+      setBusy(false);
     }
-    const refreshed = await fetch(`${apiBaseUrl}/tasks`);
-    if (refreshed.ok) {
-      const loaded: Task[] = await refreshed.json();
-      setTasks(loaded);
-      const updated = loaded.find((task) => task.id === selectedTask.id) ?? selectedTask;
-      setSelectedTask(updated);
-      await loadTaskDetails(updated);
+  }
+
+  async function executePlan() {
+    if (!task || !activeRepo) return;
+    setBusy(true);
+    setBottomTab("tests");
+    setAgentLog("Applying patch and running tests…");
+    try {
+      // Apply + test on the registered root so editor tabs refresh against the same files.
+      // Disposable copies remain available via POST /repos/{id}/agent-workspace for isolated runs.
+      const updated = await api.executeTask(task.id, activeRepo.root_path);
+      setTask(updated);
+      setEvents(await api.events(task.id));
+      setAgentLog(`Execution finished: ${updated.status}`);
+      await refreshTree(activeRepo.id);
+      for (const tab of tabs) {
+        try {
+          const file = await api.readFile(activeRepo.id, tab.path);
+          setTabs((current) =>
+            current.map((item) =>
+              item.path === tab.path
+                ? item.content === item.savedContent
+                  ? { ...item, content: file.content, savedContent: file.content }
+                  : item
+                : item,
+            ),
+          );
+        } catch {
+          /* ignore missing */
+        }
+      }
+      await refreshGit(activeRepo.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Execution failed.");
+      setAgentLog("Execution failed.");
+    } finally {
+      setBusy(false);
     }
   }
 
   async function cancelTask() {
-    if (!selectedTask || isCancelling) return;
-    if (!CANCELLABLE_STATUSES.has(selectedTask.status)) return;
-    setIsCancelling(true);
-    setError(null);
+    if (!task) return;
+    setBusy(true);
     try {
-      const response = await fetch(`${apiBaseUrl}/tasks/${selectedTask.id}/cancel`, { method: "POST" });
-      if (!response.ok) throw new Error("Could not cancel this task.");
-      const cancelled: Task = await response.json();
-      setSelectedTask(cancelled);
-      setTasks((current) => current.map((task) => (task.id === cancelled.id ? cancelled : task)));
-      await loadTaskDetails(cancelled);
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Could not cancel this task.");
+      setTask(await api.cancelTask(task.id));
+      setAgentLog("Task cancelled.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not cancel.");
     } finally {
-      setIsCancelling(false);
+      setBusy(false);
     }
   }
 
   async function retryTask() {
-    if (!selectedTask || isRetrying || selectedTask.status !== "needs_attention") return;
-    setIsRetrying(true);
-    setError(null);
+    if (!task) return;
+    setBusy(true);
     try {
-      const response = await fetch(`${apiBaseUrl}/tasks/${selectedTask.id}/retry`, { method: "POST" });
-      if (!response.ok) {
-        const detail = await response.text();
-        throw new Error(detail || "Could not retry this task.");
-      }
-      const retried: Task = await response.json();
-      setSelectedTask(retried);
-      setTasks((current) => current.map((task) => (task.id === retried.id ? retried : task)));
-      await loadTaskDetails(retried);
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Could not retry this task.");
+      setTask(await api.retryTask(task.id));
+      setAgentLog("Retry accepted.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not retry.");
     } finally {
-      setIsRetrying(false);
+      setBusy(false);
     }
   }
 
-  const canCancel =
-    !!selectedTask && CANCELLABLE_STATUSES.has(selectedTask.status) && !TERMINAL_STATUSES.has(selectedTask.status);
-  const showRetry = selectedTask?.status === "needs_attention";
-  const recoveryEvent = events.find((event) => event.type === "task.recovered");
+  const bottomContent = (() => {
+    if (bottomTab === "git") return gitDiff || gitStatus || "No git output.";
+    if (bottomTab === "tests") return agentLog;
+    if (bottomTab === "problems") return error || "No problems.";
+    return events.map((event) => `#${event.id} ${event.type}\n${event.payload}`).join("\n\n") || agentLog;
+  })();
 
   return (
-    <>
-      <div className="atmosphere" aria-hidden="true" />
-      <main className="dashboard-shell">
-        <header className="topbar">
-          <div className="brand-lockup">
-            <span className="brand-mark">F</span>
-            <div>
-              <p className="eyebrow">Software engineering agent</p>
-              <h1 className="brand-name">Forge</h1>
-            </div>
-          </div>
-          <div className="runtime-pill">
-            <span className="status-dot" />
-            <span>Cloud runtime</span>
-          </div>
-        </header>
-
-        <section className="hero">
-          <div className="hero-copy">
-            <p className="eyebrow">Investigate · plan · verify</p>
-            <h2>Turn issues into verified changes.</h2>
-            <p className="intro-copy">
-              Queue a coding task, review an approval-gated plan, then let Forge patch and test in an isolated
-              workspace.
-            </p>
-            <div className="cta-row">
-              <span className="ghost-chip">Approval gated</span>
-              <span className="ghost-chip">Isolated workspace</span>
-              <span className="ghost-chip">Test verified</span>
-            </div>
-          </div>
-
-          <form className="task-composer" onSubmit={createTask}>
-            <div className="panel-heading">
-              <div>
-                <span className="step-number">01</span>
-                <h3>Open a task</h3>
-              </div>
-              <span className="panel-caption">New investigation</span>
-            </div>
-            <label>
-              Task title
+    <div className="workspace-app">
+      <header className="workspace-toolbar">
+        <div className="workspace-brand">
+          <span className="brand-mark">F</span>
+          <strong>Forge</strong>
+        </div>
+        <div className="toolbar-center">
+          <select
+            className="repo-select"
+            value={activeRepoId ?? ""}
+            onChange={(event) => setActiveRepoId(event.target.value ? Number(event.target.value) : null)}
+          >
+            <option value="">Select workspace</option>
+            {repos.map((repo) => (
+              <option key={repo.id} value={repo.id}>
+                {repo.name}
+              </option>
+            ))}
+          </select>
+          {hostEnabled ? (
+            <>
               <input
-                value={title}
-                onChange={(event) => setTitle(event.target.value)}
-                placeholder="Fix the failing parser"
-                required
+                className="repo-path-input"
+                value={registerPath}
+                onChange={(event) => setRegisterPath(event.target.value)}
+                aria-label="Repository path"
               />
-            </label>
-            <label>
-              What needs attention?
-              <textarea
-                value={description}
-                onChange={(event) => setDescription(event.target.value)}
-                placeholder="Describe the issue, expected behavior, and any useful clues."
-                rows={5}
-                required
-              />
-            </label>
-            <button className="btn" type="submit" disabled={isSubmitting}>
-              {isSubmitting ? "Queueing..." : "Queue investigation"}
-              <span>↗</span>
-            </button>
-            {error && <p className="error-message">{error}</p>}
-          </form>
-        </section>
-
-        <section className="activity-section">
-          <div className="section-heading">
-            <div>
-              <p className="eyebrow">Operations</p>
-              <h2>Task history</h2>
-            </div>
-            <span className="count-badge">{tasks.length.toString().padStart(2, "0")} TASKS</span>
-          </div>
-          {tasks.length === 0 ? (
-            <div className="empty-state">
-              <span className="empty-glyph">+</span>
-              <p>No investigations yet.</p>
-              <small>Queued work appears here with live execution state.</small>
-            </div>
+              <button type="button" className="btn toolbar-btn" onClick={() => void registerRepo()}>
+                Open
+              </button>
+            </>
           ) : (
-            <div className="task-list">
-              {tasks.map((task) => (
-                <button
-                  className={`task-select ${selectedTask?.id === task.id ? "selected" : ""}`}
-                  key={task.id}
-                  onClick={() => setSelectedTask(task)}
-                  type="button"
-                >
-                  <div>
-                    <span className="task-id">TASK-{String(task.id).padStart(4, "0")}</span>
-                    <h3>{task.title}</h3>
-                    <p>{task.description}</p>
-                  </div>
-                  <span className={`status-badge status-${task.status}`}>{task.status.replaceAll("_", " ")}</span>
-                </button>
-              ))}
-            </div>
+            <span className="panel-muted">{capabilityNote}</span>
           )}
+        </div>
+        <div className="toolbar-actions">
+          <span className="git-pill">{branch}</span>
+          <span className="agent-pill">
+            <span className="status-dot" />
+            {busy ? "Agent busy" : "Idle"}
+          </span>
+        </div>
+      </header>
+
+      {error && <p className="workspace-error">{error}</p>}
+
+      <div className="workspace-main">
+        <aside className="explorer-pane">
+          <div className="side-heading" style={{ padding: "10px 12px 0" }}>
+            <h2>Explorer</h2>
+          </div>
+          <div className="explorer-tools">
+            <input value={filter} onChange={(event) => setFilter(event.target.value)} aria-label="Filter files" />
+            <button
+              type="button"
+              className="btn toolbar-btn btn-secondary"
+              onClick={() => activeRepoId && void refreshTree(activeRepoId)}
+            >
+              ↻
+            </button>
+          </div>
+          {activeRepo ? (
+            <FileTree nodes={filteredTree} selectedPath={activePath} onOpen={(path) => void openFile(path)} />
+          ) : (
+            <p className="panel-muted">Register a local folder path on the API host to begin.</p>
+          )}
+        </aside>
+
+        <section className="editor-pane">
+          <div className="editor-tabs">
+            {tabs.map((tab) => (
+              <button
+                key={tab.path}
+                type="button"
+                className={`editor-tab ${tab.path === activePath ? "active" : ""}`}
+                onClick={() => setActivePath(tab.path)}
+              >
+                <span>
+                  {tab.path.split("/").pop()}
+                  {tab.content !== tab.savedContent ? <span className="dirty"> •</span> : null}
+                </span>
+                <span
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    closeTab(tab.path);
+                  }}
+                >
+                  ×
+                </span>
+              </button>
+            ))}
+          </div>
+          <div className="editor-body">
+            <CodeEditor
+              path={activePath}
+              value={activeTab?.content ?? ""}
+              onChange={updateActiveContent}
+            />
+          </div>
+          <div className="editor-actions">
+            <button type="button" className="btn toolbar-btn" onClick={() => void saveActive()} disabled={!dirty}>
+              Save
+            </button>
+            <button
+              type="button"
+              className="btn toolbar-btn btn-secondary"
+              disabled={!dirty || !activeTab}
+              onClick={() => {
+                if (!activeTab) return;
+                setTabs((current) =>
+                  current.map((tab) =>
+                    tab.path === activeTab.path ? { ...tab, content: tab.savedContent } : tab,
+                  ),
+                );
+              }}
+            >
+              Discard
+            </button>
+          </div>
         </section>
 
-        {selectedTask && (
-          <section className="detail-grid">
-            <div className="detail-panel">
-              <div className="section-heading">
-                <div>
-                  <p className="eyebrow">Selected task</p>
-                  <h2>{selectedTask.title}</h2>
-                </div>
-                <span className={`status-badge status-${selectedTask.status}`}>
-                  {selectedTask.status.replaceAll("_", " ")}
-                </span>
-              </div>
-              {showRetry && (
-                <div className="attention-banner">
-                  <p>This task needs attention after an interruption or uncertain run.</p>
-                  <small>
-                    {recoveryEvent
-                      ? recoveryEvent.payload
-                      : "Review events and the disposable workspace before retrying. Partial patches are not repeated automatically."}
-                  </small>
-                </div>
-              )}
-              {plan ? (
-                <>
-                  <p className="plan-summary">{plan.summary}</p>
-                  <p className="plan-content">{plan.content}</p>
-                  {plan.proposed_diff && <pre className="diff-view">{plan.proposed_diff}</pre>}
-                  {plan.status === "awaiting_approval" &&
-                    selectedTask.status === "awaiting_approval" &&
-                    !isCancelling && (
-                      <button className="btn" onClick={approvePlan} disabled={isCancelling} type="button">
-                        Approve plan <span>→</span>
-                      </button>
-                    )}
-                </>
-              ) : (
-                <div className="waiting-state">
-                  <p>Plan not available yet.</p>
-                  <small>The agent publishes a plan here before any edit is authorized.</small>
-                </div>
-              )}
-              {showRetry && (
-                <button
-                  className="btn btn-secondary"
-                  onClick={retryTask}
-                  disabled={isRetrying || isCancelling}
-                  type="button"
-                >
-                  {isRetrying ? "Retrying..." : "Retry safe recovery"}
-                  <span>↻</span>
-                </button>
-              )}
-              {canCancel && (
-                <button
-                  className="btn btn-danger"
-                  onClick={cancelTask}
-                  disabled={isCancelling || isRetrying}
-                  type="button"
-                >
-                  {isCancelling ? "Cancelling..." : "Cancel task"}
-                  <span>×</span>
-                </button>
-              )}
-            </div>
-            <div className="detail-panel">
-              <div className="panel-heading">
-                <div>
-                  <span className="step-number">LIVE</span>
-                  <h3>Event history</h3>
-                </div>
-                <span className="panel-caption">SSE replay</span>
-              </div>
-              <div className="event-list">
-                {events.map((event) => (
-                  <div className="event-item" key={event.id}>
-                    <span className="event-dot" />
-                    <div>
-                      <span className="task-id">
-                        #{event.id} / {event.type}
-                      </span>
-                      <p>{event.payload}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </section>
-        )}
-      </main>
-    </>
+        <AgentPanel
+          prompt={prompt}
+          onPromptChange={setPrompt}
+          onSubmit={() => void runAgent()}
+          onCancel={() => void cancelTask()}
+          onApprove={() => void approvePlan()}
+          onExecute={() => void executePlan()}
+          onRetry={() => void retryTask()}
+          busy={busy}
+          task={task}
+          plan={plan}
+          events={events}
+          openFilePath={activePath}
+        />
+      </div>
+
+      <section className="bottom-panel">
+        <div className="bottom-tabs">
+          {(
+            [
+              ["problems", "Problems"],
+              ["tests", "Test Results"],
+              ["agent", "Agent Output"],
+              ["git", "Git"],
+            ] as const
+          ).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              className={`bottom-tab ${bottomTab === id ? "active" : ""}`}
+              onClick={() => setBottomTab(id)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <div className="bottom-body">{bottomContent}</div>
+      </section>
+    </div>
   );
 }

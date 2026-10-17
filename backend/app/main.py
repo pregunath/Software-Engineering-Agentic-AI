@@ -11,6 +11,7 @@ from app.inspection_api import router as inspection_router
 from app.ollama import OllamaClient
 from app.plans import router as plans_router
 from app.recovery import recover_interrupted_tasks
+from app.repos import router as repos_router
 from app.tasks import router as tasks_router
 from app.workspace_api import router as workspace_router
 
@@ -49,7 +50,7 @@ def create_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=settings.cors_origin_list(),
         allow_credentials=False,
-        allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Content-Type", "Authorization"],
     )
     protected = [Depends(require_api_key)]
@@ -57,6 +58,7 @@ def create_app() -> FastAPI:
     application.include_router(plans_router, dependencies=protected)
     application.include_router(inspection_router, dependencies=protected)
     application.include_router(workspace_router, dependencies=protected)
+    application.include_router(repos_router, dependencies=protected)
     application.add_api_route("/health", health, methods=["GET"])
     application.add_api_route("/health/database", database_health, methods=["GET"])
     return application
