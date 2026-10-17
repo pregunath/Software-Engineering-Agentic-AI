@@ -9,6 +9,7 @@ from app.db import get_db, initialize_database
 from app.ollama import OllamaClient
 from app.inspection_api import router as inspection_router
 from app.plans import router as plans_router
+from app.recovery import recover_interrupted_tasks
 from app.tasks import router as tasks_router
 from app.workspace_api import router as workspace_router
 
@@ -16,6 +17,7 @@ from app.workspace_api import router as workspace_router
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     initialize_database()
+    recover_interrupted_tasks()
     yield
 
 

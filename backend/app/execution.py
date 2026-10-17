@@ -7,6 +7,7 @@ import shutil
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+from collections.abc import Callable
 
 
 class ExecutionError(ValueError):
@@ -128,7 +129,7 @@ class DockerCommandRunner:
         self.timeout_seconds = timeout_seconds
         self.max_output_chars = max_output_chars
 
-    def run(self, command: list[str]) -> CommandResult:
+    def run(self, command: list[str], should_cancel: Callable[[], bool] | None = None) -> CommandResult:
         normalized = tuple(command)
         if not normalized or not any(normalized[: len(allowed)] == allowed for allowed in SAFE_COMMANDS):
             raise ExecutionError("Command is not on the approved test command allowlist")
@@ -141,21 +142,34 @@ class DockerCommandRunner:
         ]
         started = time.monotonic()
         try:
-            completed = subprocess.run(
-                docker_command, capture_output=True, text=True,
-                timeout=self.timeout_seconds, check=False, shell=False,
+            process = subprocess.Popen(
+                docker_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, shell=False,
             )
+            started = time.monotonic()
+            while process.poll() is None:
+                if should_cancel and should_cancel():
+                    process.terminate()
+                    try:
+                        stdout, stderr = process.communicate(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        stdout, stderr = process.communicate()
+                    return CommandResult(normalized, -1, stdout[: self.max_output_chars], stderr[: self.max_output_chars], time.monotonic() - started, isolated=True)
+                if time.monotonic() - started >= self.timeout_seconds:
+                    process.terminate()
+                    try:
+                        stdout, stderr = process.communicate(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        stdout, stderr = process.communicate()
+                    return CommandResult(normalized, -1, stdout[: self.max_output_chars], stderr[: self.max_output_chars], time.monotonic() - started, timed_out=True, isolated=True)
+                time.sleep(0.1)
+            stdout, stderr = process.communicate()
             return CommandResult(
-                normalized, completed.returncode,
-                completed.stdout[: self.max_output_chars],
-                completed.stderr[: self.max_output_chars],
+                normalized, process.returncode,
+                stdout[: self.max_output_chars], stderr[: self.max_output_chars],
                 time.monotonic() - started, isolated=True,
-            )
-        except subprocess.TimeoutExpired as error:
-            return CommandResult(
-                normalized, -1, (error.stdout or "")[: self.max_output_chars],
-                (error.stderr or "")[: self.max_output_chars],
-                time.monotonic() - started, timed_out=True, isolated=True,
             )
         except OSError as error:
             raise DockerIsolationUnavailable(f"Docker command could not start: {error}") from error

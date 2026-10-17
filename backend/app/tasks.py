@@ -7,7 +7,7 @@ from app.db import get_db
 from app.events import format_sse, list_events, record_event
 from app.models import Task, TaskStatus
 from app.schemas import TaskCreate, TaskRead, TaskStatusUpdate
-from app.task_service import update_task_status
+from app.task_service import cancel_task, update_task_status
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -37,6 +37,11 @@ def change_task_status(
     task_id: int, status_input: TaskStatusUpdate, db: Session = Depends(get_db)
 ) -> Task:
     return update_task_status(db, task_id, status_input.status)
+
+
+@router.post("/{task_id}/cancel", response_model=TaskRead)
+def cancel_task_endpoint(task_id: int, db: Session = Depends(get_db)) -> Task:
+    return cancel_task(db, task_id)
 
 
 @router.get("/{task_id}/events")

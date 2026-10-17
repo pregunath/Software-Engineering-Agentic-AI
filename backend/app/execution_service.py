@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.events import record_event
+from app.db import SessionLocal
 from app.execution import DockerCommandRunner, ProjectTestCommandDetector
 from app.models import PlanStatus, Task, TaskPlan, TaskStatus
 from app.patching import PatchError, WorkspaceEditor
@@ -22,12 +23,25 @@ def execute_approved_plan(db: Session, task_id: int, workspace_path: str) -> Tas
         raise HTTPException(status_code=409, detail="An approved plan is required")
     if task.status != TaskStatus.EXECUTING.value:
         raise HTTPException(status_code=409, detail="Task is not ready for execution")
+
+    def is_cancelled() -> bool:
+        probe = SessionLocal()
+        try:
+            current = probe.get(Task, task_id)
+            return current is None or current.status == TaskStatus.CANCELLED.value
+        finally:
+            probe.close()
+
     try:
+        if is_cancelled():
+            raise PatchError("Task was cancelled before execution started")
         editor = WorkspaceEditor(Path(workspace_path))
         if not plan.proposed_diff.strip():
             raise PatchError("Approved plan contains no proposed diff")
         checkpoint = editor.apply_unified_diff(plan.proposed_diff)
         record_event(db, task_id, "patch.applied", {"checkpoint": checkpoint.id})
+        if is_cancelled():
+            raise PatchError("Task was cancelled after patch application")
         update_task_status(db, task_id, TaskStatus.TESTING)
         commands = ProjectTestCommandDetector(Path(workspace_path)).detect()
         if not commands:
@@ -35,7 +49,9 @@ def execute_approved_plan(db: Session, task_id: int, workspace_path: str) -> Tas
         runner = DockerCommandRunner(Path(workspace_path))
         results = []
         for command in commands:
-            result = runner.run(list(command))
+            result = runner.run(list(command), should_cancel=is_cancelled)
+            if is_cancelled():
+                raise PatchError("Task was cancelled during test execution")
             results.append({"command": list(command), "exit_code": result.exit_code, "timed_out": result.timed_out, "stdout": result.stdout, "stderr": result.stderr})
         all_passed = all(result["exit_code"] == 0 and not result["timed_out"] for result in results)
         record_event(db, task_id, "tests.completed", {"passed": all_passed, "results": results})

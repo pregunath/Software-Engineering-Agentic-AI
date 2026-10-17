@@ -49,6 +49,7 @@ button:disabled { cursor: wait; opacity: .65; }
 .task-row p { max-width: 680px; margin: 0; color: var(--muted); line-height: 1.45; }
 .status-badge { padding: 7px 9px; background: #e4eee9; color: var(--teal); font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; white-space: nowrap; }
 .status-queued { background: #f9e6d9; color: #a9542d; }
+.cancel-button { background: #a83c33; margin-top: 18px; }
 .detail-grid { display: grid; grid-template-columns: 1.1fr .9fr; gap: 22px; margin-top: 42px; }
 .detail-panel { min-width: 0; padding: 24px; border: 1px solid var(--line); background: var(--panel); }
 .detail-panel .section-heading { border-bottom: 1px solid var(--line); }

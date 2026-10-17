@@ -17,7 +17,7 @@ def test_approved_diff_and_detected_test_complete_task(tmp_path: Path, monkeypat
         def __init__(self, workspace: Path):
             self.workspace = workspace
 
-        def run(self, command: list[str]) -> CommandResult:
+        def run(self, command: list[str], should_cancel=None) -> CommandResult:
             return CommandResult(tuple(command), 0, "passed", "", 0.01, isolated=True)
 
     monkeypatch.setattr("app.execution_service.DockerCommandRunner", FakeDockerRunner)

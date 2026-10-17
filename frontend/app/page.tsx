@@ -16,6 +16,7 @@ export default function Home() {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => { void loadTasks(); }, []);
@@ -71,6 +72,24 @@ export default function Home() {
     await loadTaskDetails(selectedTask);
   }
 
+  async function cancelTask() {
+    if (!selectedTask) return;
+    setIsCancelling(true);
+    setError(null);
+    try {
+      const response = await fetch(`${apiBaseUrl}/tasks/${selectedTask.id}/cancel`, { method: "POST" });
+      if (!response.ok) throw new Error("Could not cancel this task.");
+      const cancelled: Task = await response.json();
+      setSelectedTask(cancelled);
+      setTasks((current) => current.map((task) => task.id === cancelled.id ? cancelled : task));
+      await loadTaskDetails(cancelled);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Could not cancel this task.");
+    } finally {
+      setIsCancelling(false);
+    }
+  }
+
   return (
     <main className="dashboard-shell">
       <header className="topbar"><div className="brand-lockup"><span className="brand-mark">F</span><div><p className="eyebrow">LOCAL ENGINEERING SYSTEM</p><h1>Forge</h1></div></div><div className="runtime-pill"><span className="status-dot" /> Ollama local runtime</div></header>
@@ -78,7 +97,7 @@ export default function Home() {
         <form className="task-composer" onSubmit={createTask}><div className="panel-heading"><div><span className="step-number">01</span><h3>Open a task</h3></div><span className="panel-caption">NEW INVESTIGATION</span></div><label>Task title<input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Fix the failing parser" required /></label><label>What needs attention?<textarea value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Describe the issue, expected behavior, and any useful clues." rows={5} required /></label><button type="submit" disabled={isSubmitting}>{isSubmitting ? "Queueing..." : "Queue investigation"}<span>↗</span></button>{error && <p className="error-message">{error}</p>}</form>
       </section>
       <section className="activity-section"><div className="section-heading"><div><p className="eyebrow">OPERATIONS</p><h2>Task history</h2></div><span className="count-badge">{tasks.length.toString().padStart(2, "0")} TASKS</span></div>{tasks.length === 0 ? <div className="empty-state"><span className="empty-glyph">+</span><p>No investigations yet.</p><small>Your queued work will appear here with live execution state.</small></div> : <div className="task-list">{tasks.map((task) => <button className={`task-row task-select ${selectedTask?.id === task.id ? "selected" : ""}`} key={task.id} onClick={() => setSelectedTask(task)}><div><span className="task-id">TASK-{String(task.id).padStart(4, "0")}</span><h3>{task.title}</h3><p>{task.description}</p></div><span className={`status-badge status-${task.status}`}>{task.status.replaceAll("_", " ")}</span></button>)}</div>}</section>
-      {selectedTask && <section className="detail-grid"><div className="detail-panel"><div className="section-heading"><div><p className="eyebrow">SELECTED TASK</p><h2>{selectedTask.title}</h2></div><span className={`status-badge status-${selectedTask.status}`}>{selectedTask.status.replaceAll("_", " ")}</span></div>{plan ? <><p className="plan-summary">{plan.summary}</p><p className="plan-content">{plan.content}</p>{plan.proposed_diff && <pre className="diff-view">{plan.proposed_diff}</pre>}{plan.status === "awaiting_approval" && <button onClick={approvePlan}>Approve plan <span>→</span></button>}</> : <div className="waiting-state"><p>Plan not available yet.</p><small>The agent will publish a plan here before any edit is authorized.</small></div>}</div><div className="detail-panel event-panel"><div className="panel-heading"><div><span className="step-number">LIVE</span><h3>Event history</h3></div><span className="panel-caption">SSE REPLAY</span></div><div className="event-list">{events.map((event) => <div className="event-item" key={event.id}><span className="event-dot" /><div><span className="task-id">#{event.id} / {event.type}</span><p>{event.payload}</p></div></div>)}</div></div></section>}
+      {selectedTask && <section className="detail-grid"><div className="detail-panel"><div className="section-heading"><div><p className="eyebrow">SELECTED TASK</p><h2>{selectedTask.title}</h2></div><span className={`status-badge status-${selectedTask.status}`}>{selectedTask.status.replaceAll("_", " ")}</span></div>{plan ? <><p className="plan-summary">{plan.summary}</p><p className="plan-content">{plan.content}</p>{plan.proposed_diff && <pre className="diff-view">{plan.proposed_diff}</pre>}{plan.status === "awaiting_approval" && <button onClick={approvePlan}>Approve plan <span>→</span></button>}</> : <div className="waiting-state"><p>Plan not available yet.</p><small>The agent will publish a plan here before any edit is authorized.</small></div>}{!["completed", "failed", "cancelled"].includes(selectedTask.status) && <button className="cancel-button" onClick={cancelTask} disabled={isCancelling}>{isCancelling ? "Cancelling..." : "Cancel task"}<span>×</span></button>}</div><div className="detail-panel event-panel"><div className="panel-heading"><div><span className="step-number">LIVE</span><h3>Event history</h3></div><span className="panel-caption">SSE REPLAY</span></div><div className="event-list">{events.map((event) => <div className="event-item" key={event.id}><span className="event-dot" /><div><span className="task-id">#{event.id} / {event.type}</span><p>{event.payload}</p></div></div>)}</div></div></section>}
     </main>
   );
 }
