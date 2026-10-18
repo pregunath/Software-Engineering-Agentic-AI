@@ -52,6 +52,14 @@ class OllamaClient:
             raise LLMError("Ollama returned invalid model capabilities")
         return ModelCapabilities(model, tuple(capabilities))
 
+    def _client_timeout(self) -> httpx.Timeout:
+        return httpx.Timeout(
+            connect=10.0,
+            read=self._timeout,
+            write=30.0,
+            pool=10.0,
+        )
+
     async def chat(
         self,
         model: str,
@@ -63,11 +71,22 @@ class OllamaClient:
             request["tools"] = tools
         try:
             async with httpx.AsyncClient(
-                base_url=self._base_url, timeout=self._timeout, transport=self._transport
+                base_url=self._base_url, timeout=self._client_timeout(), transport=self._transport
             ) as client:
                 response = await client.post("/api/chat", json=request)
                 response.raise_for_status()
                 payload = response.json()
+        except httpx.TimeoutException as error:
+            raise LLMError(
+                f"Ollama timed out after {self._timeout:.0f}s while generating a reply "
+                f"with model '{model}'. The model may still be loading; try again, or raise "
+                "AGENT_OLLAMA_TIMEOUT_SECONDS."
+            ) from error
+        except httpx.HTTPStatusError as error:
+            detail = error.response.text[:300] if error.response is not None else str(error)
+            raise LLMError(
+                f"Ollama chat request failed ({error.response.status_code if error.response else '?'}): {detail}"
+            ) from error
         except (httpx.HTTPError, ValueError) as error:
             raise LLMError(f"Ollama chat request failed: {error}") from error
         if not isinstance(payload, dict) or not isinstance(payload.get("message"), dict):

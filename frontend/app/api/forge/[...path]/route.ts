@@ -18,7 +18,10 @@ function forwardHeaders(request: NextRequest): Headers {
   if (contentType) headers.set("content-type", contentType);
   const accept = request.headers.get("accept");
   if (accept) headers.set("accept", accept);
-  if (apiKey) headers.set("authorization", `Bearer ${apiKey}`);
+  // Prefer the browser session JWT; fall back to server-side service key.
+  const incoming = request.headers.get("authorization");
+  if (incoming) headers.set("authorization", incoming);
+  else if (apiKey) headers.set("authorization", `Bearer ${apiKey}`);
   return headers;
 }
 

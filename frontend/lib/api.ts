@@ -1,3 +1,5 @@
+import { authHeaders } from "./auth";
+
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "/api/forge";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -5,12 +7,19 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
     headers: {
       ...(init?.body ? { "Content-Type": "application/json" } : {}),
+      ...authHeaders(),
       ...init?.headers,
     },
   });
   if (!response.ok) {
     const detail = await response.text();
-    throw new Error(detail || `Request failed: ${response.status}`);
+    try {
+      const parsed = JSON.parse(detail) as { detail?: string };
+      throw new Error(parsed.detail || detail || `Request failed: ${response.status}`);
+    } catch (error) {
+      if (error instanceof Error && error.message !== detail) throw error;
+      throw new Error(detail || `Request failed: ${response.status}`);
+    }
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
@@ -31,7 +40,13 @@ export type TreeNode = {
   children?: TreeNode[];
 };
 
-export type Task = { id: number; title: string; description: string; status: string; workspace_id?: number | null };
+export type Task = {
+  id: number;
+  title: string;
+  description: string;
+  status: string;
+  workspace_id?: number | null;
+};
 export type Plan = {
   id: number;
   summary: string;
@@ -41,8 +56,76 @@ export type Plan = {
 };
 export type TaskEvent = { id: number; type: string; payload: string };
 
+export type AuthResponse = {
+  access_token: string;
+  user: {
+    id: number;
+    email: string;
+    display_name: string;
+    role?: string;
+    github_connected: boolean;
+    github_login: string | null;
+  };
+};
+
+export type ChatSession = { id: number; title: string };
+export type ChatMessage = { id: number; role: string; content: string };
+export type GithubRemoteRepo = {
+  full_name: string;
+  description: string | null;
+  private: boolean;
+  default_branch: string;
+  clone_url: string;
+  html_url: string;
+};
+export type ConnectedRepo = {
+  id: number;
+  full_name: string;
+  default_branch: string;
+  local_path: string | null;
+  workspace_id: number | null;
+};
+
 export const api = {
   baseUrl: apiBaseUrl,
+  register: (email: string, password: string, display_name: string) =>
+    request<AuthResponse>("/auth/register", {
+      method: "POST",
+      body: JSON.stringify({ email, password, display_name }),
+    }),
+  login: (email: string, password: string) =>
+    request<AuthResponse>("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ email, password }),
+    }),
+  me: () => request<AuthResponse["user"]>("/auth/me"),
+  listChatSessions: () => request<ChatSession[]>("/chat/sessions"),
+  createChatSession: () => request<ChatSession>("/chat/sessions", { method: "POST" }),
+  listChatMessages: (sessionId: number) => request<ChatMessage[]>(`/chat/sessions/${sessionId}/messages`),
+  sendChatMessage: (content: string, session_id?: number) =>
+    request<{ session: ChatSession; messages: ChatMessage[] }>("/chat/messages", {
+      method: "POST",
+      body: JSON.stringify({ content, session_id }),
+    }),
+  githubStatus: () => request<{ connected: boolean; login: string | null }>("/github/status"),
+  connectGithub: (personal_access_token: string) =>
+    request<{ connected: boolean; login: string | null }>("/github/connect", {
+      method: "POST",
+      body: JSON.stringify({ personal_access_token }),
+    }),
+  disconnectGithub: () => request<void>("/github/connect", { method: "DELETE" }),
+  listGithubRepos: () => request<GithubRemoteRepo[]>("/github/repos"),
+  listConnectedRepos: () => request<ConnectedRepo[]>("/github/connected"),
+  connectGithubRepo: (full_name: string) =>
+    request<ConnectedRepo>("/github/connected", {
+      method: "POST",
+      body: JSON.stringify({ full_name }),
+    }),
+  createGithubTask: (repo_id: number, title: string, description: string) =>
+    request<Task & { local_path: string }>("/github/tasks", {
+      method: "POST",
+      body: JSON.stringify({ repo_id, title, description }),
+    }),
   capabilities: () => request<{ host_workspaces_enabled: boolean; note: string }>("/repos/capabilities"),
   listRepos: () => request<Repo[]>("/repos"),
   registerRepo: (path: string, name?: string) =>
@@ -63,7 +146,8 @@ export const api = {
     }),
   gitStatus: (id: number) => request<{ branch: string; status: string }>(`/repos/${id}/git/status`),
   gitDiff: (id: number) => request<{ diff: string }>(`/repos/${id}/git/diff`),
-  agentWorkspace: (id: number) => request<{ path: string; source: string }>(`/repos/${id}/agent-workspace`, { method: "POST" }),
+  agentWorkspace: (id: number) =>
+    request<{ path: string; source: string }>(`/repos/${id}/agent-workspace`, { method: "POST" }),
   createTask: (title: string, description: string, workspace_id?: number) =>
     request<Task>("/tasks", {
       method: "POST",

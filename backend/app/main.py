@@ -4,9 +4,12 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
+from app.accounts_api import router as accounts_router
 from app.auth import require_api_key
+from app.chat_api import router as chat_router
 from app.config import Settings, get_settings
 from app.db import get_db, initialize_database
+from app.github_api import router as github_router
 from app.inspection_api import router as inspection_router
 from app.ollama import OllamaClient
 from app.plans import router as plans_router
@@ -54,6 +57,9 @@ def create_app() -> FastAPI:
         allow_headers=["Content-Type", "Authorization"],
     )
     protected = [Depends(require_api_key)]
+    application.include_router(accounts_router)
+    application.include_router(chat_router)
+    application.include_router(github_router)
     application.include_router(tasks_router, dependencies=protected)
     application.include_router(plans_router, dependencies=protected)
     application.include_router(inspection_router, dependencies=protected)

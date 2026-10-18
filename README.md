@@ -4,11 +4,13 @@ Forge investigates coding tasks, creates an approval-gated plan, applies changes
 
 It runs **locally** for development and can deploy **globally** (Vercel frontend + Fly.io API + Ollama).
 
-## Coding workspace
+## Product surface
 
-The UI is a standalone coding environment (explorer + Monaco + agent + git/test panel). See [docs/workspace.md](docs/workspace.md).
+- **Chat mode** (`/`): ChatGPT-style conversation with local Ollama (requires account).
+- **Agent mode** (`/agent`): Connect GitHub via PAT, clone a repo, create approval-gated coding tasks.
+- **Code workspace** (`/workspace`): Monaco explorer/editor for local host paths. See [docs/workspace.md](docs/workspace.md).
 
-Register a project by pasting an **absolute path on the API host** (local mode). Browsers cannot browse your disk directly.
+Create an account at `/register`, then sign in at `/login`.
 
 ## Modes
 

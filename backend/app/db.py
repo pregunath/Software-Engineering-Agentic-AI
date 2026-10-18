@@ -26,13 +26,21 @@ def initialize_database() -> None:
     import app.models  # noqa: F401 — register metadata
 
     Base.metadata.create_all(bind=engine)
-    _ensure_sqlite_task_workspace_column()
+    _ensure_sqlite_columns()
 
 
-def _ensure_sqlite_task_workspace_column() -> None:
+def _ensure_sqlite_columns() -> None:
     if not str(engine.url).startswith("sqlite"):
         return
     with engine.begin() as connection:
-        columns = {row[1] for row in connection.execute(text("PRAGMA table_info(tasks)")).fetchall()}
-        if "workspace_id" not in columns:
-            connection.execute(text("ALTER TABLE tasks ADD COLUMN workspace_id INTEGER"))
+        task_columns = {row[1] for row in connection.execute(text("PRAGMA table_info(tasks)")).fetchall()}
+        if task_columns:
+            if "workspace_id" not in task_columns:
+                connection.execute(text("ALTER TABLE tasks ADD COLUMN workspace_id INTEGER"))
+            if "user_id" not in task_columns:
+                connection.execute(text("ALTER TABLE tasks ADD COLUMN user_id INTEGER"))
+            if "github_repo_id" not in task_columns:
+                connection.execute(text("ALTER TABLE tasks ADD COLUMN github_repo_id INTEGER"))
+        user_columns = {row[1] for row in connection.execute(text("PRAGMA table_info(users)")).fetchall()}
+        if user_columns and "role" not in user_columns:
+            connection.execute(text("ALTER TABLE users ADD COLUMN role VARCHAR(20) DEFAULT 'user'"))

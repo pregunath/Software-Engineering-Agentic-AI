@@ -12,7 +12,8 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./agent.db"
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "gemma4:e2b"
-    ollama_timeout_seconds: float = Field(default=30.0, ge=1.0, le=300.0)
+    # Chat/plan generation can take well over 30s on first gemma4 load.
+    ollama_timeout_seconds: float = Field(default=180.0, ge=1.0, le=900.0)
     api_host: str = "127.0.0.1"
     api_port: int = Field(default=8000, ge=1, le=65535)
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
@@ -21,6 +22,9 @@ class Settings(BaseSettings):
     # When true, the API may register absolute paths on the host running Forge.
     # Keep false on public cloud hosts so clients cannot probe the server filesystem.
     allow_host_workspaces: bool = True
+    jwt_secret: str = "forge-dev-secret-change-me-32chars!"
+    jwt_expire_minutes: int = Field(default=60 * 24 * 7, ge=5, le=60 * 24 * 30)
+    github_api_base_url: str = "https://api.github.com"
 
     @field_validator("cors_origins", mode="before")
     @classmethod
